@@ -1,0 +1,969 @@
+library("magrittr")
+library("janitor")
+library("ggplot2")
+library("forcats")
+library("dplyr")
+library("phyloseq")
+library("ggpubr")
+library("tidyr")
+library("Rmisc")
+library("microViz")
+library("readxl")
+library("tidyverse")
+library("conflicted")
+library("ggExtra")
+library("cowplot")
+library("gridExtra")
+library("ggforce")
+library("vegan")
+library('rstatix')
+library("ggpmisc")
+library("data.table")
+library("tibble")
+library("pheatmap")
+library("grid")
+
+My_Theme = theme(axis.title.x = element_text(face="bold",size=24),
+                 axis.text.x = element_text(colour = "black", size=22), 
+                 axis.text.y = element_text(colour = "black", size=22),
+                 axis.title.y = element_text(face="bold",size=24),
+                 plot.title = element_text(size = 24),
+                 legend.title =element_text(face="bold",size = 14),
+                 legend.text = element_text(size = 14),
+                 legend.key.size = unit(1, "cm"),
+                 strip.text.x = element_text(size=22, face="bold"),
+                 strip.text.y = element_text(size=22, face="bold"),
+                 panel.border = element_rect(fill = NA, colour = "black"),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.background = element_blank())
+
+library(microViz)
+brewerPlus <- distinct_palette()
+
+###Figure S#
+Soil_metagenome_read_counts=read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Code_files/Fig3_and_4/Soil_metagenome_read_count_corrected.csv")
+
+#Rename column #of Hits to Number_of_Hits 
+Soil_ORF_CLASS_edited=read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Code_files/Fig3_and_4/Soil_ORF_CLASS_edited.csv")
+
+Soil_metadata=read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Code_files/Fig3_and_4/Soil_metadata.csv")
+
+#Join metagenome reads with ORF by sample ID
+Soil_Joined_metagenome_ORF=merge(Soil_metagenome_read_counts,Soil_ORF_CLASS_edited, by="Sample", all=TRUE)
+
+#Join merged metagenome reads +ORF above with metadata
+Soil_Joined_metagenome_ORF_metadata=merge(Soil_Joined_metagenome_ORF,Soil_metadata, by="Sample", all=TRUE)
+
+
+#Mutate and create new column ((# of ORF hits)/(# of Sample Reads))*1,000,000 to get ORF hits per million reads for each class present in each sample
+conflicts_prefer(rstatix::mutate)
+Soil_ORF_Class_hits_per_mil_reads=Soil_Joined_metagenome_ORF_metadata %>% 
+  select (total_Reads,Class, Number_of_Hits, Samples,Sample, Treatment, Day,mapped_Reads,unmapped_Reads) %>%
+  mutate(ORF_hits_per_million_reads=(Number_of_Hits/total_Reads)*1000000) %>%
+  mutate(Percent_mapped=(mapped_Reads/total_Reads)*100)%>%
+  mutate(Percent_unmapped=(unmapped_Reads/total_Reads)*100)
+
+
+
+#Set day as factor
+Soil_ORF_Class_hits_per_mil_reads$Day<-as.factor(Soil_ORF_Class_hits_per_mil_reads$Day)
+Soil_ORF_Class_hits_per_mil_reads$Samples<-factor(Soil_ORF_Class_hits_per_mil_reads$Samples, levels=c("205R1","205R2","205R3","P205","210R1","210R2","210R3","P210","215R1","215R2","215R3","P215","225R1","225R2","225R3","P225","230R1", "230R2","230R3","P230", "P305","P310","P315","P325","P330","P405","P410","P415","P425","P430","P505","P510","P515","P525","P530","P605","P610","P615","P625","P630","P705","P710","P715","P725","P730","P805","P810","P815","P825","P830"))
+
+#Calculate summary SE
+library(Rmisc)
+Summary_Soil_ORF_Class_hits_per_mil_reads<-summarySE(Soil_ORF_Class_hits_per_mil_reads,measurevar="ORF_hits_per_million_reads",groupvars=c("Treatment","Day","Class"))
+
+
+
+#Remove NA's
+Summary_Soil_ORF_Class_hits_per_mil_reads=Summary_Soil_ORF_Class_hits_per_mil_reads[!is.na(Summary_Soil_ORF_Class_hits_per_mil_reads$Class), ]
+
+
+#write.csv
+#write.csv(Summary_Soil_ORF_Class_hits_per_mil_reads,"/Users/syalinyganasamurthy/Dropbox/Ganasamurthy_Global_MAG_paper/Code_files/Fig3/Summary_Soil_ORF_Class_hits_per_mil_reads.csv")
+
+
+#chnage to factor
+Summary_Soil_ORF_Class_hits_per_mil_reads$Day<-as.factor(Summary_Soil_ORF_Class_hits_per_mil_reads$Day)
+
+#order treatment
+Summary_Soil_ORF_Class_hits_per_mil_reads$Treatment<-factor(Summary_Soil_ORF_Class_hits_per_mil_reads$Treatment, levels=c("NC","PC","AB","AF","AB+AF"))
+
+day_treatment_abundance <- subset(Summary_Soil_ORF_Class_hits_per_mil_reads, select = -c(N, sd, se, ci))
+
+library(data.table)
+setDT(day_treatment_abundance)
+day_treatment_abundance1  = day_treatment_abundance [ , .(counted = sum(ORF_hits_per_million_reads)), by = .(Class, Day, Treatment)]
+
+day_treatment_abundance1$Treatment<-factor(day_treatment_abundance1$Treatment, levels=c("AB", "AF", "AB+AF", "PC", "NC"))
+
+day_treatment_relative_abundance_plot <- ggplot(day_treatment_abundance1, aes(x=Day, y = counted)) +
+  geom_bar(aes(fill = Class), position = "fill", stat="identity", color = "black")  +
+  scale_fill_manual(values = c("Actinobacteria" = "#C2DD9B", "Alphaproteobacteria" = "#B4CCDF", "Bacilli_A" = "#4A75AA", "Bacteroidia" = "#E3A29D", "Gammaproteobacteria" = "#C04335", "Gemmatimonadetes" = "#ECC485", "Myxococcia" = "#E18B46", "Nitrososphaeria" = "#4B9B7A", "Nitrospiria" = "#5F4190", "Polyangia" = "#CA6728", "Saccharimonadia" = "#9C623C", "Thermoanaerobaculia" = "#666666", "Thermoleophilia" = "#D43F88","Verrucomicrobiae" = "#FFFFB0", "Vicinamibacteria" = "#7470AF")) +
+  facet_wrap(~Treatment) +
+  labs(y = "Relative abundance", x = "Treatment") +
+  theme(axis.title.x = element_text(face="bold",size=24),
+        axis.text.x = element_text(colour = "black", size=22, angle = 45, hjust = 1), 
+        axis.text.y = element_text(colour = "black", size=22),
+        axis.title.y = element_text(face="bold",size=24),
+        plot.title = element_text(size = 24),
+        legend.title =element_text(face="bold",size = 14),
+        legend.text = element_text(size = 14),
+        legend.key.size = unit(1, "cm"),
+        strip.text.x = element_text(size=22, face="bold"),
+        strip.text.y = element_text(size=22, face="bold"),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  guides(fill=guide_legend(ncol=2))
+
+#pdf("/Users/yugibeast/Library/CloudStorage/Dropbox/Ganasamurthy_Global_MAG_paper/Main_Figures/relative_abundance_soils_day_treatment.pdf",width=14,height=12) # Open a new pdf file
+
+#view
+day_treatment_relative_abundance_plot
+
+#dev.off()
+
+
+###Figure S#
+
+##Do dotplot version
+
+remove(metabolism_summary)
+
+conflicts_prefer(rstatix::mutate)
+MISC1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "MISC")
+
+MISC1 <-MISC1 %>%
+  mutate(MISC1,"function_description" = "Misc", .after = gene_description)
+
+carbon_utilization1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization")
+
+carbon_utilization1 <-carbon_utilization1 %>%
+  mutate(carbon_utilization1,"function_description" = "carbon utilization", .after = gene_description)
+
+Transporters1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "Transporters")
+
+Transporters1 <-Transporters1 %>%
+  mutate(Transporters1,"function_description" = "Transporters", .after = gene_description)
+
+Energy1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "Energy")
+
+Energy1 <-Energy1 %>%
+  mutate(Energy1,"function_description" = "Energy", .after = gene_description)
+
+organic_nitrogen1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "Organic Nitrogen")
+
+organic_nitrogen1 <-organic_nitrogen1 %>%
+  mutate(organic_nitrogen1,"function_description" = "Organic Nitrogen", .after = gene_description)
+
+Woodcroft1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization (Woodcroft)")
+
+Woodcroft1 <-Woodcroft1 %>%
+  mutate(Woodcroft1,"function_description" = "carbon utilization (Woodcroft)", .after = gene_description)
+
+rRNA1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "rRNA")
+
+rRNA1 <-rRNA1 %>%
+  mutate(rRNA1,"function_description" = "rRNA", .after = gene_description)
+
+tRNA1 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/metabolism_summary.xlsx", sheet = "tRNA")
+
+tRNA1 <-tRNA1 %>%
+  mutate(tRNA1,"function_description" = "tRNA", .after = gene_description)
+
+
+
+##2_genome_summaries
+MISC2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "MISC")
+
+MISC2 <-MISC2 %>%
+  mutate(MISC2,"function_description" = "Misc", .after = gene_description)
+
+MISC2 <- subset(MISC2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+carbon_utilization2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization")
+
+carbon_utilization2 <-carbon_utilization2 %>%
+  mutate(carbon_utilization2,"function_description" = "carbon utilization", .after = gene_description)
+
+carbon_utilization2 <- subset(carbon_utilization2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Transporters2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "Transporters")
+
+Transporters2 <-Transporters2 %>%
+  mutate(Transporters2,"function_description" = "Transporters", .after = gene_description)
+
+Transporters2 <- subset(Transporters2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Energy2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "Energy")
+
+Energy2 <-Energy2 %>%
+  mutate(Energy2,"function_description" = "Energy", .after = gene_description)
+
+Energy2 <- subset(Energy2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+organic_nitrogen2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "Organic Nitrogen")
+
+organic_nitrogen2 <-organic_nitrogen2 %>%
+  mutate(organic_nitrogen2,"function_description" = "Organic Nitrogen", .after = gene_description)
+
+organic_nitrogen2 <- subset(organic_nitrogen2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Woodcroft2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization (Woodcroft)")
+
+Woodcroft2 <-Woodcroft2 %>%
+  mutate(Woodcroft2,"function_description" = "carbon utilization (Woodcroft)", .after = gene_description)
+
+Woodcroft2 <- subset(Woodcroft2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+rRNA2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "rRNA")
+
+rRNA2 <-rRNA2 %>%
+  mutate(rRNA2,"function_description" = "rRNA", .after = gene_description)
+
+rRNA2 <- subset(rRNA2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+tRNA2 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/metabolism_summary.xlsx", sheet = "tRNA")
+
+tRNA2 <-tRNA2 %>%
+  mutate(tRNA2,"function_description" = "tRNA", .after = gene_description)
+
+tRNA2 <- subset(tRNA2, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+##3_genome_summaries
+MISC3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "MISC")
+
+MISC3 <-MISC3 %>%
+  mutate(MISC3,"function_description" = "Misc", .after = gene_description)
+
+MISC3 <- subset(MISC3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+carbon_utilization3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization")
+
+carbon_utilization3 <-carbon_utilization3 %>%
+  mutate(carbon_utilization3,"function_description" = "carbon utilization", .after = gene_description)
+
+carbon_utilization3 <- subset(carbon_utilization3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Transporters3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "Transporters")
+
+Transporters3 <-Transporters3 %>%
+  mutate(Transporters3,"function_description" = "Transporters", .after = gene_description)
+
+Transporters3 <- subset(Transporters3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Energy3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "Energy")
+
+Energy3 <-Energy3 %>%
+  mutate(Energy3,"function_description" = "Energy", .after = gene_description)
+
+Energy3 <- subset(Energy3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+organic_nitrogen3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "Organic Nitrogen")
+
+organic_nitrogen3 <-organic_nitrogen3 %>%
+  mutate(organic_nitrogen3,"function_description" = "Organic Nitrogen", .after = gene_description)
+
+organic_nitrogen3 <- subset(organic_nitrogen3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Woodcroft3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization (Woodcroft)")
+
+Woodcroft3 <-Woodcroft3 %>%
+  mutate(Woodcroft3,"function_description" = "carbon utilization (Woodcroft)", .after = gene_description)
+
+Woodcroft3 <- subset(Woodcroft3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+rRNA3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "rRNA")
+
+rRNA3 <-rRNA3 %>%
+  mutate(rRNA3,"function_description" = "rRNA", .after = gene_description)
+
+rRNA3 <- subset(rRNA3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+tRNA3 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/metabolism_summary.xlsx", sheet = "tRNA")
+
+tRNA3 <-tRNA3 %>%
+  mutate(tRNA3,"function_description" = "tRNA", .after = gene_description)
+
+tRNA3 <- subset(tRNA3, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+##4_genome_summaries
+MISC4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "MISC")
+
+MISC4 <-MISC4 %>%
+  mutate(MISC4,"function_description" = "Misc", .after = gene_description)
+
+MISC4 <- subset(MISC4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+carbon_utilization4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization")
+
+carbon_utilization4 <-carbon_utilization4 %>%
+  mutate(carbon_utilization4,"function_description" = "carbon utilization", .after = gene_description)
+
+carbon_utilization4 <- subset(carbon_utilization4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Transporters4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "Transporters")
+
+Transporters4 <-Transporters4 %>%
+  mutate(Transporters4,"function_description" = "Transporters", .after = gene_description)
+
+Transporters4 <- subset(Transporters4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Energy4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "Energy")
+
+Energy4 <-Energy4 %>%
+  mutate(Energy4,"function_description" = "Energy", .after = gene_description)
+
+Energy4 <- subset(Energy4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+organic_nitrogen4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "Organic Nitrogen")
+
+organic_nitrogen4 <-organic_nitrogen4 %>%
+  mutate(organic_nitrogen4,"function_description" = "Organic Nitrogen", .after = gene_description)
+
+organic_nitrogen4 <- subset(organic_nitrogen4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Woodcroft4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization (Woodcroft)")
+
+Woodcroft4 <-Woodcroft4 %>%
+  mutate(Woodcroft4,"function_description" = "carbon utilization (Woodcroft)", .after = gene_description)
+
+Woodcroft4 <- subset(Woodcroft4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+rRNA4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "rRNA")
+
+rRNA4 <-rRNA4 %>%
+  mutate(rRNA4,"function_description" = "rRNA", .after = gene_description)
+
+rRNA4 <- subset(rRNA4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+tRNA4 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/metabolism_summary.xlsx", sheet = "tRNA")
+
+tRNA4 <-tRNA4 %>%
+  mutate(tRNA4,"function_description" = "tRNA", .after = gene_description)
+
+tRNA4 <- subset(tRNA4, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+
+##5_genome_summaries
+MISC5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "MISC")
+
+MISC5 <-MISC5 %>%
+  mutate(MISC5,"function_description" = "Misc", .after = gene_description)
+
+MISC5 <- subset(MISC5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+carbon_utilization5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization")
+
+carbon_utilization5 <-carbon_utilization5 %>%
+  mutate(carbon_utilization5,"function_description" = "carbon utilization", .after = gene_description)
+
+carbon_utilization5 <- subset(carbon_utilization5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Transporters5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "Transporters")
+
+Transporters5 <-Transporters5 %>%
+  mutate(Transporters5,"function_description" = "Transporters", .after = gene_description)
+
+Transporters5 <- subset(Transporters5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Energy5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "Energy")
+
+Energy5 <-Energy5 %>%
+  mutate(Energy5,"function_description" = "Energy", .after = gene_description)
+
+Energy5 <- subset(Energy5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+organic_nitrogen5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "Organic Nitrogen")
+
+organic_nitrogen5 <-organic_nitrogen5 %>%
+  mutate(organic_nitrogen5,"function_description" = "Organic Nitrogen", .after = gene_description)
+
+organic_nitrogen5 <- subset(organic_nitrogen5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+Woodcroft5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "carbon utilization (Woodcroft)")
+
+Woodcroft5 <-Woodcroft5 %>%
+  mutate(Woodcroft5,"function_description" = "carbon utilization (Woodcroft)", .after = gene_description)
+
+Woodcroft5 <- subset(Woodcroft5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+rRNA5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "rRNA")
+
+rRNA5 <-rRNA5 %>%
+  mutate(rRNA5,"function_description" = "rRNA", .after = gene_description)
+
+rRNA5 <- subset(rRNA5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+tRNA5 <- read_excel("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/metabolism_summary.xlsx", sheet = "tRNA")
+
+tRNA5 <-tRNA5 %>%
+  mutate(tRNA5,"function_description" = "tRNA", .after = gene_description)
+
+tRNA5 <- subset(tRNA5, select = -c(gene_id, gene_description, function_description, module, header, subheader))
+
+
+MISC_combined <- dplyr::bind_cols(MISC1,MISC2,MISC3,MISC4,MISC5)
+
+carbon_utilization_combined <- dplyr::bind_cols(carbon_utilization1,carbon_utilization2,carbon_utilization3,carbon_utilization4,carbon_utilization5)
+
+Transporters_combined <- dplyr::bind_cols(Transporters1,Transporters2,Transporters3,Transporters4,Transporters5)
+
+Energy_combined <- dplyr::bind_cols(Energy1,Energy2,Energy3,Energy4,Energy5)
+
+organic_nitrogen_combined <- dplyr::bind_cols(organic_nitrogen1,organic_nitrogen2,organic_nitrogen3,organic_nitrogen4,organic_nitrogen5)
+
+Woodcroft_combined <- dplyr::bind_cols(Woodcroft1,Woodcroft2,Woodcroft3,Woodcroft4,Woodcroft5)
+
+rRNA_combined <- dplyr::bind_cols(rRNA1,rRNA2,rRNA3,rRNA4,rRNA5)
+
+#tRNA_combined <- dplyr::bind_cols(tRNA1,tRNA2,tRNA3,tRNA4,tRNA5,tRNA6,tRNA7,tRNA8,tRNA9)
+
+library(vegan)
+
+remove(metabolism_summary)
+
+metabolism_summary<-dplyr::bind_rows(MISC_combined,carbon_utilization_combined,Transporters_combined,Energy_combined,organic_nitrogen_combined,Woodcroft_combined,rRNA_combined)
+
+names(metabolism_summary)[1] <- "gene_id"
+names(metabolism_summary)[2] <- "gene_description"
+names(metabolism_summary)[3] <- "function_description"
+names(metabolism_summary)[4] <- "module"
+names(metabolism_summary)[5] <- "header"
+names(metabolism_summary)[6] <- "subheader"
+
+
+metabolism_summary$unique_id <- paste(metabolism_summary$function_description, metabolism_summary$gene_id,  metabolism_summary$module, sep="_")
+
+#metabolism_summary<-dplyr::bind_rows(MISC1,carbon_utilization1,Transporters1,Energy1,Organic_Nitrogen1,Woodcroft1,rRNA1,tRNA1)
+
+
+
+metabolism_summary$unique_id <- paste(metabolism_summary$function_description, metabolism_summary$gene_id,  metabolism_summary$module, sep="_")
+metabolism_summary<-select(metabolism_summary,unique_id, everything())
+
+metabolism_summary_for_dotplot <- gather(metabolism_summary, bin, count, "10_bin.1":"5_bin.9")
+
+for_treatment <- read.csv("/Volumes/micro-shared$/MoralesLab/Manuscripts/Global_soil_MAG_paper/Code_files/Fig1/Bin_taxonomy_Table_MAGS.csv")
+
+for_treatment <- subset(for_treatment, select = c(Bin_ID, Treatment))
+
+DRAM_by_treatment <- merge(metabolism_summary_for_dotplot, for_treatment, by.x = "bin", by.y = "Bin_ID")
+
+DRAM_by_treatment_for_dotplot <- subset(DRAM_by_treatment, select = c(bin, header, Treatment, count))
+
+#DRAM_by_treatment_treatment_for_dotplot <- subset(DRAM_by_treatment_for_dotplot, select = c(header, Treatment, count))
+
+conflicts_prefer(dplyr::filter)
+DRAM_by_treatment_for_dotplot <- filter(DRAM_by_treatment_for_dotplot, count > 0)
+
+DRAM_by_treatment_for_dotplot$count <- as.numeric(DRAM_by_treatment_for_dotplot$count)
+
+library(data.table)
+setDT(DRAM_by_treatment_for_dotplot)
+DRAM_by_treatment_for_dotplot1  = DRAM_by_treatment_for_dotplot [ , .(counted = sum(count)), by = .(bin, header, Treatment)]
+
+##change header names
+
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"central carbon", "Central carbon")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"Electron transport Chain", "Electron transport chain")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"Antibiotic Resistance", "Antibiotic resistance")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"pyruvate metabolism", "Pyruvate metabolism")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"Flagella Structure", "Flagella structure")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"hydrocarbon degradation", "Hydrocarbon degradation")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"sugar utilization (woodcroft)", "Sugar utilization (Woodcroft)")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"aerobic corrin ring synthesis", "Aerobic corrin ring synthesis")
+DRAM_by_treatment_for_dotplot1$header <- str_replace(DRAM_by_treatment_for_dotplot1$header,"Metal Reduction", "Metal reduction")
+
+
+DRAM_by_treatment_long <- DRAM_by_treatment_for_dotplot1
+DRAM_by_treatment_long <- subset(DRAM_by_treatment_long, select = -c(bin))
+
+
+DRAM_by_treatment_wide <-reshape(DRAM_by_treatment_long, idvar = "header", timevar = "Treatment", direction = "wide")
+colnames(DRAM_by_treatment_wide) <- c("header", "AB", "PC", "NC", "AF", "AB_AF")
+
+DRAM_by_treatment_wide$dif_AB <- DRAM_by_treatment_wide$AB-DRAM_by_treatment_wide$NC
+DRAM_by_treatment_wide$dif_AF <- DRAM_by_treatment_wide$AF-DRAM_by_treatment_wide$NC
+DRAM_by_treatment_wide$dif_AB_AF <- DRAM_by_treatment_wide$AB_AF-DRAM_by_treatment_wide$NC
+DRAM_by_treatment_wide$dif_PC <- DRAM_by_treatment_wide$PC-DRAM_by_treatment_wide$NC
+
+DRAM_by_treatment_wide <- subset(DRAM_by_treatment_wide, select = c(header, dif_AB, dif_AF, dif_AB_AF, dif_PC))
+
+DRAM_dif_by_treatment <- gather(DRAM_by_treatment_wide, Treatment, counted, dif_AB:dif_PC, factor_key=TRUE)
+
+DRAM_by_treatment_for_dotplot1$Treatment<-factor(DRAM_by_treatment_for_dotplot1$Treatment,levels =c("AB","AF","AB+AF","PC","NC"))
+
+
+
+###Dots per Treatment DRAM Overview
+for_treatment <- read.csv("/Volumes/micro-shared$/MoralesLab/Manuscripts/Global_soil_MAG_paper/Code_files/Fig1/Bin_taxonomy_Table_MAGS.csv")
+
+for_treatment <- subset(for_treatment, select = c(Bin_ID, Treatment))
+
+DRAM_by_treatment <- merge(metabolism_summary_for_dotplot, for_treatment, by.x = "bin", by.y = "Bin_ID")
+
+DRAM_by_treatment_for_dotplot <- subset(DRAM_by_treatment, select = c(header, Treatment, count))
+Treatment_freq <- subset(for_treatment, select = c(Treatment))
+conflicts_prefer(dplyr::count)
+Treatment_freq <- dplyr::rename(count(Treatment_freq, Treatment), Freq = n)
+DRAM_by_treatment_for_dotplot_norm <- merge(DRAM_by_treatment_for_dotplot1, Treatment_freq, by = c("Treatment"))
+DRAM_by_treatment_for_dotplot_norm$normalized <- DRAM_by_treatment_for_dotplot_norm$counted/DRAM_by_treatment_for_dotplot_norm$Freq
+
+DRAM_by_treatment_for_dotplot_norm 
+
+#metabolism_summary_for_dotplot_treatment <- merge(metabolism_summary_for_dotplot_treatment, for_phylum, by.x = "bin", by.y = "Bin_ID")
+DRAM_by_treatment_for_dotplot_norm <- subset(DRAM_by_treatment_for_dotplot_norm, select = c(header, Treatment, normalized))
+
+conflicts_prefer(dplyr::filter)
+DRAM_by_treatment_for_dotplot_norm <- filter(DRAM_by_treatment_for_dotplot_norm, normalized > 0)
+
+library(data.table)
+setDT(DRAM_by_treatment_for_dotplot_norm)
+DRAM_by_treatment_for_dotplot_norm1  = DRAM_by_treatment_for_dotplot_norm [ , .(counted = sum(normalized)), by = .(header, Treatment)]
+
+
+DRAM_by_treatment_for_dotplot_norm1$Treatment <- factor(DRAM_by_treatment_for_dotplot_norm1$Treatment,levels = c("AB","AF","AB+AF","PC","NC"))
+
+DRAM_by_treatment_for_dotplot_norm1$Treatment <- factor(DRAM_by_treatment_for_dotplot_norm1$Treatment,levels = c("AB","AF","AB+AF","PC","NC"))
+
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"central carbon", "Central carbon")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"Electron transport Chain", "Electron transport chain")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"Antibiotic Resistance", "Antibiotic resistance")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"pyruvate metabolism", "Pyruvate metabolism")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"Flagella Structure", "Flagella structure")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"hydrocarbon degradation", "Hydrocarbon degradation")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"sugar utilization (woodcroft)", "Sugar utilization (Woodcroft)")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"aerobic corrin ring synthesis", "Aerobic corrin ring synthesis")
+DRAM_by_treatment_for_dotplot_norm1$header <- str_replace(DRAM_by_treatment_for_dotplot_norm1$header,"Metal Reduction", "Metal reduction")
+
+library(viridis)
+
+DRAM_overview_between_treatment <- ggplot(DRAM_by_treatment_for_dotplot_norm1, aes(x = reorder(header, -counted), y = counted), group = counted, color = Treatment) +
+  scale_color_viridis(discrete=TRUE, option = "C") +
+  geom_point(size = 3, aes(color = factor(Treatment))) +
+  labs(x = "Gene category", y = "Normalized total gene counts per Treatment (Log)", color = "Treatment") +
+  theme(axis.title.x = element_text(face="bold",size=24),
+        axis.text.x = element_text(angle=90, colour = "black", vjust=0.5, hjust = 1, size=22), 
+        axis.text.y = element_text(colour = "black", size=22),
+        axis.title.y = element_text(face="bold",size=24),
+        plot.title = element_text(size = 22),
+        legend.title =element_text(face="bold",size = 24),
+        legend.text = element_text(size = 22),
+        legend.key.size = unit(1, "cm"),
+        strip.text.x = element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=18, face="bold"),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none") +
+  scale_y_continuous(trans='log10')
+
+#pdf("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Yugen_Figures/Normalized_DRAM_overview_between_Treatment.pdf",width=10,height=18) # Open a new pdf file
+
+#view
+DRAM_overview_between_treatment
+
+#dev.off()
+
+#extracted difference from NC
+DRAM_by_treatment_for_dotplot_norm12 = DRAM_by_treatment_for_dotplot_norm1[!grepl("Electron_transport_chain", DRAM_by_treatment_for_dotplot_norm1$header),]
+DRAM_by_treatment_for_dotplot_norm12 = DRAM_by_treatment_for_dotplot_norm1[!grepl("Electron_transport_chain", DRAM_by_treatment_for_dotplot_norm1$header),]
+
+
+DRAM_by_treatment_for_dotplot_norm12 <- DRAM_by_treatment_for_dotplot_norm1  %>% filter(grepl('Flagella structure|Sulfur|Nitrogen|C1-methane|Flagellar cytoplasmic|corrin ring|SCFA|Metal reduction', header))
+
+DRAM_specific_between_treatment <- ggplot(DRAM_by_treatment_for_dotplot_norm12, aes(x = reorder(header, -counted), y = counted), group = counted, color = Treatment) +
+  scale_color_viridis(discrete=TRUE, option = "C") +
+  geom_point(size = 3, aes(color = factor(Treatment))) +
+  labs(x = "Gene category", y = "Normalized total gene counts per Treatment (Log)", color = "Treatment") +
+  theme(axis.title.x = element_text(face="bold",size=24),
+        axis.text.x = element_text(angle=90, colour = "black", vjust=0.5, hjust = 1, size=22), 
+        axis.text.y = element_text(colour = "black", size=22),
+        axis.title.y = element_text(face="bold",size=24),
+        plot.title = element_text(size = 22),
+        legend.title =element_text(face="bold",size = 24),
+        legend.text = element_text(size = 22),
+        legend.key.size = unit(1, "cm"),
+        strip.text.x = element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=18, face="bold"),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  scale_y_continuous(trans='log10')
+
+DRAM_specific_between_treatment
+
+#pdf("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Yugen_Figures/Normalized_DRAM_specific_between_Treatment.pdf",width=6,height=14) # Open a new pdf file
+
+
+
+metabolism_summary_for_dotplot <- gather(metabolism_summary, bin, count, "10_bin.1":"5_bin.9")
+
+for_treatment <- read.csv("/Volumes/micro-shared$/MoralesLab/Manuscripts/Global_soil_MAG_paper/Code_files/Fig1/Bin_taxonomy_Table_MAGS.csv")
+
+for_treatment <- subset(for_treatment, select = c(Bin_ID, Treatment))
+
+DRAM_by_treatment <- merge(metabolism_summary_for_dotplot, for_treatment, by.x = "bin", by.y = "Bin_ID")
+
+DRAM_by_treatment_for_dotplot <- subset(DRAM_by_treatment, select = c(header, Treatment, count))
+
+#DRAM_by_treatment_treatment_for_dotplot <- subset(DRAM_by_treatment_for_dotplot, select = c(header, Treatment, count))
+
+conflicts_prefer(dplyr::count)
+Treatment_freq <- subset(for_treatment, select = c(Treatment))
+Treatment_freq <- dplyr::rename(count(Treatment_freq, Treatment), Freq = n)
+
+
+
+conflicts_prefer(dplyr::filter)
+DRAM_by_treatment_for_dotplot <- filter(DRAM_by_treatment_for_dotplot, count > 0)
+
+DRAM_by_treatment_for_dotplot$count <- as.numeric(DRAM_by_treatment_for_dotplot$count)
+
+library(data.table)
+setDT(DRAM_by_treatment_for_dotplot)
+DRAM_by_treatment_for_dotplot1  = DRAM_by_treatment_for_dotplot [ , .(counted = sum(count)), by = .(header, Treatment)]
+
+DRAM_by_treatment_for_dotplot_norm <- merge(DRAM_by_treatment_for_dotplot1, Treatment_freq, by = c("Treatment"))
+DRAM_by_treatment_for_dotplot_norm$normalized <- DRAM_by_treatment_for_dotplot_norm$counted/DRAM_by_treatment_for_dotplot_norm$Freq
+
+
+
+
+Treatment_metabolism_compared <- compare_means(counted ~ Treatment,  data = DRAM_by_treatment_for_dotplot1,
+                                               group.by = "header")
+
+Treatment_metabolism_compared
+
+metabolism_summary_for_dotplot <- gather(metabolism_summary, bin, count, "10_bin.1":"5_bin.9")
+metabolism_summary_for_dotplot_treatment <- merge(metabolism_summary_for_dotplot, for_treatment, by.x = "bin", by.y = "Bin_ID")
+metabolism_summary_for_dotplot_treatment <- subset(metabolism_summary_for_dotplot_treatment, select = -c(gene_description, gene_id, function_description, module, subheader, unique_id))
+
+conflicts_prefer(dplyr::filter)
+metabolism_summary_for_dotplot_treatment <- filter(metabolism_summary_for_dotplot_treatment, count > 0)
+
+library(data.table)
+setDT(metabolism_summary_for_dotplot_treatment)
+metabolism_summary_for_dotplot_treatment1  = metabolism_summary_for_dotplot_treatment [ , .(counted = sum(count)), by = .(header, Treatment, bin)]
+
+
+
+DRAM_overview_per_treatment <- ggplot(metabolism_summary_for_dotplot_treatment1, aes(x = reorder(header, -counted), y = counted, fill = header)) +
+  scale_y_continuous(trans='log10') +
+  geom_boxplot() +
+  facet_wrap(~Treatment, ncol = 1)+
+  scale_fill_manual(values = c("#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C","white", "#E31A1C", "white", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C", "#E31A1C","white", "white", "#E31A1C", "white", "white", "white", "#E31A1C", "#E31A1C")) +
+  labs(x = "Gene category", y = "Average gene counts / bin / water mass (Log)") +
+  theme(axis.title.x = element_text(face="bold",size=24),
+        axis.text.x = element_text(angle=90, colour = "black", vjust=1, hjust = 1, size=22), 
+        axis.text.y = element_text(colour = "black", size=22),
+        axis.title.y = element_text(face="bold",size=24),
+        plot.title = element_text(size = 22),
+        legend.title =element_text(face="bold",size = 24),
+        legend.text = element_text(size = 22),
+        legend.key.size = unit(1, "cm"),
+        strip.text.x = element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=18, face="bold"),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none")
+
+
+DRAM_overview_per_treatment
+#view
+DRAM_specific_between_treatment
+
+
+t_metabolism_summary <- t(metabolism_summary)
+
+com = metabolism_summary[,8:ncol(metabolism_summary)]
+
+com <- t(com)
+
+m_com <- as.matrix(com)
+
+tot <- rowSums(m_com)
+m_com <- m_com[tot > 0, ]
+
+m_com <- na.omit(m_com)
+
+set.seed(123)
+nmds = metaMDS(m_com, distance = "bray")
+nmds
+
+data.scores = as.data.frame(scores(nmds)$sites)
+
+data.scores$bin_ID <- row.names(data.scores)
+
+for_class_merge <- read.csv("/Volumes/micro-shared$/MoralesLab/Manuscripts/Global_soil_MAG_paper/Code_files/Fig1/Bin_taxonomy_Table_MAGS.csv")
+
+data.scores$Bin_ID <- row.names(data.scores)
+
+data.scores <- merge(data.scores, for_class_merge, by = c("Bin_ID"))
+
+Facet_Functional_NMDS_Treatment <- ggplot(data.scores, aes(x = NMDS1, y = NMDS2)) + 
+  facet_wrap(~Class) +
+  geom_point(size = 4, aes(color = Treatment)) +
+  scale_color_manual(values = c("AB" = "#0C0881", "AF" = "#7316A2", "AB+AF" = "#BD5077", "PC" = "#EA9953", "NC" = "#F2F958")) +
+  theme(axis.title.x = element_text(face="bold",size=24),
+        axis.text.x = element_text(colour = "black", size=22), 
+        axis.text.y = element_text(colour = "black", size=22),
+        axis.title.y = element_text(face="bold",size=24),
+        plot.title = element_text(size = 20),
+        legend.title =element_text(face="bold",size = 14),
+        legend.text = element_text(size = 12),
+        legend.key.size = unit(1, "cm"),
+        strip.text.x = element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=18, face="bold"),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  labs(x = "NMDS1", colour = "Treatment", y = "NMDS2", shape = "Type") +
+  ylim(-1.5, 1.1)
+
+Facet_Functional_NMDS_Treatment
+
+pdf("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Yugen_Figures/Figure_S2.pdf", width = 24, height = 18)
+grid.arrange(DRAM_overview_between_treatment, Facet_Functional_NMDS_Treatment,
+             nrow = 1,
+             widths=c(1.5, 2))
+dev.off()
+
+###PER GENUS
+product1 <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_1/genome_summaries/product.tsv",fill = TRUE, header = TRUE, sep = "\t",check.names=FALSE)
+product2 <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_2/genome_summaries/product.tsv",fill = TRUE, header = TRUE, sep = "\t",check.names=FALSE)
+product3 <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_3/genome_summaries/product.tsv",fill = TRUE, header = TRUE, sep = "\t",check.names=FALSE)
+product4 <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_4/genome_summaries/product.tsv",fill = TRUE, header = TRUE, sep = "\t",check.names=FALSE)
+product5 <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/DRAM/Soil_DRAM_5/genome_summaries/product.tsv",fill = TRUE, header = TRUE, sep = "\t",check.names=FALSE)
+
+
+product_combined <- dplyr::bind_rows(product1, product2, product3, product4, product5)
+
+best_bins <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/raw_data_for_figs/Soils_bin_base_data.csv",fill = TRUE, header = TRUE, sep = ",")
+
+
+
+best_bins_taxa <- as.matrix(best_bins[12:18])
+
+best_bins_taxa <- tax_table(best_bins_taxa)
+
+
+best_bins_taxa <- best_bins_taxa %>%
+  tax_fix()
+
+best_bins_taxa <- data.frame(best_bins_taxa)
+
+best_bins <- best_bins %>%
+  .[-c(12:18)]
+
+best_bins <- column_to_rownames(best_bins, var = "Bin_ID")
+
+best_bins_combined <- cbind(best_bins, best_bins_taxa)
+
+best_bins <- rownames_to_column(best_bins_combined, var = "Bin_ID")
+
+mdata <- melt(best_bins, id=c("Bin_ID","Day", "Class", "Treatment", "Genus"))
+
+##combining for just by genome
+product_combined_genus <- merge(product_combined, mdata, by.x = ("genome"), by.y = ("Bin_ID"))
+product_combined_genus <- subset(product_combined_genus, select = -c(genome, Day, Treatment, Class, variable, value))
+
+product_combined_genus <- product_combined_genus %>%
+  select(Genus, everything())
+
+
+Row_clusters<-mdata[ -c(6:7)]
+Row_clusters<-distinct(Row_clusters,Genus,.keep_all= TRUE)
+rownames(Row_clusters) <- Row_clusters$Genus
+Row_clusters <- Row_clusters[ -c(1) ]
+#Row_clusters$Treatment<-as.character(Row_clusters$Treatment)
+
+Row_clusters <- Row_clusters[ -c(4)]
+
+
+#keep only bins being analysed
+library(conflicted)
+conflicts_prefer(rstatix::filter)
+product_combined<-filter(product_combined_genus, Genus %in% best_bins$Genus)
+
+
+
+
+#split into presence/absence vs pathway completeness results
+all_bin_pcompleteness <- product_combined[ -c(34:99) ]
+
+all_bin_cazy <- product_combined[ -c(2:33) ]
+
+#rename 'genome' to 'Bin_ID' for consistency
+conflicts_prefer(plyr::rename)
+all_bin_pcompleteness<-rename(all_bin_pcompleteness, c("Genus" = "Bin_ID" ))
+all_bin_cazy<-rename(all_bin_cazy, c("Genus" = "Bin_ID"  ))
+
+
+
+#remove duplicate rows/bins
+all_bin_pcompleteness<-unique(all_bin_pcompleteness, by = "Bin_ID")
+all_bin_cazy<-unique(all_bin_cazy, by = "Bin_ID")
+
+#replace True/False for 1/0
+all_bin_cazy[all_bin_cazy == "False"] <- "0"
+all_bin_cazy[all_bin_cazy == "True"] <- "1"
+
+#make functional data into matrix
+
+all_bin_pcompleteness <- aggregate(. ~ Bin_ID, data = all_bin_pcompleteness, FUN = mean)
+
+rownames(all_bin_pcompleteness) <- all_bin_pcompleteness$Bin_ID
+
+#identify and delete genes with no hits
+all_bin_pcompleteness<-all_bin_pcompleteness[, colSums(all_bin_pcompleteness != 0) > 0]
+pcompleteness_matrix <- as.matrix(all_bin_pcompleteness[,-1])
+
+rownames(pcompleteness_matrix) <- all_bin_pcompleteness[,1]
+
+
+completeness_matrix <- mapply(pcompleteness_matrix, FUN=as.numeric)
+completeness_matrix <- matrix(data=completeness_matrix, ncol=length(colnames(pcompleteness_matrix)), nrow=length(row.names(pcompleteness_matrix)))
+row.names(completeness_matrix) <- row.names(pcompleteness_matrix)
+colnames(completeness_matrix) <- colnames(pcompleteness_matrix)
+
+library(pheatmap)
+library(viridis)
+
+pheatmap(completeness_matrix)
+
+
+#import modified annotations
+functional_categories <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Gemm/raw_data/DRAM/genome_summaries/functional_catgories_rev.csv",fill = TRUE, header = TRUE, sep = ",")
+
+#subset by those detected
+func_list <- colnames(pcompleteness_matrix)
+functional_categories<-filter(functional_categories, Function %in% func_list)
+
+#Keep only two columns used for plots
+rownames(functional_categories) <- functional_categories$Function
+functional_categories <- functional_categories[ -c(1) ]
+functional_categories<-rename(functional_categories, c("Renamed_function" = "Function"))
+functional_categories_annotation <- functional_categories[ -c(2) ]
+
+
+
+
+
+###Getting rid of double up of Genus
+
+
+
+#write.csv(all_bin_cazy, "/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/raw_data_for_figs/all_bin_cazy.csv")
+
+all_bin_cazy <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/raw_data_for_figs/all_bin_cazy.csv", header = TRUE)
+
+all_bin_cazy <- all_bin_cazy[-1]
+
+all_bin_cazy <- aggregate(. ~ Bin_ID, all_bin_cazy, sum)
+
+rownames(all_bin_cazy) <- all_bin_cazy$Bin_ID
+
+all_bin_cazy_list <- all_bin_cazy$Bin_ID
+
+#replace True/False for 1/0
+all_bin_cazy[all_bin_cazy > 0] <- "1"
+all_bin_cazy[all_bin_cazy == "0"] <- "0"
+
+
+
+all_bin_cazy <- all_bin_cazy[-1]
+all_bin_cazy$Bin_ID <- all_bin_cazy_list
+
+all_bin_cazy = all_bin_cazy %>% dplyr::select("Bin_ID",  
+                                              everything())
+
+rownames(all_bin_cazy) <- all_bin_cazy$Bin_ID
+
+#identify and delete genes with no hits
+all_bin_cazy<-all_bin_cazy[, colSums(all_bin_cazy != 0) > 0]
+cazy_matrix <- as.matrix(all_bin_cazy[,-1])
+
+rownames(cazy_matrix) <- all_bin_cazy[,1]
+
+
+bincazy_matrix <- mapply(cazy_matrix, FUN=as.numeric)
+bincazy_matrix <- matrix(data=bincazy_matrix, ncol=length(colnames(cazy_matrix)), nrow=length(row.names(cazy_matrix)))
+row.names(bincazy_matrix) <- row.names(cazy_matrix)
+colnames(bincazy_matrix) <- colnames(cazy_matrix)
+
+pheatmap(bincazy_matrix)
+
+#create a document with functional annotations
+cazy_categories<-as.data.frame(t(cazy_matrix))
+cazy_categories <- tibble::rownames_to_column(cazy_categories, "Cazy_Function") # Apply rownames_to_column
+#save as csv and modify file to create category annotations
+write.csv(cazy_categories, "/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/raw_data_for_figs/cazy_categories.csv", row.names = T)
+
+
+
+#re-import modified annotations
+cazy_categories <- read.csv("/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/raw_data_for_figs/cazy_categories_rev_rev.csv",fill = TRUE, header = TRUE, sep = ",")
+#cazy_categories <- cazy_categories[-1]
+#remove leading space
+cazy_categories$Renamed_function <- trimws(cazy_categories$Renamed_function, which = c("left"))
+
+#subset by those detected
+
+
+cazy_list <- colnames(all_bin_cazy)
+cazy_list <- cazy_list[-1]
+cazy_categories<-filter(cazy_categories, Cazy_Function %in% cazy_list)
+
+#Keep only two columns used for plots
+rownames(cazy_categories) <- cazy_categories$Cazy_Function
+cazy_categories <- cazy_categories[ -c(1) ]
+cazy_categories<-rename(cazy_categories, c("Renamed_function" = "CAZy_Function"))
+cazy_categories_annotation <- cazy_categories[ -c(2) ]
+
+
+
+
+
+#test heatmap
+pheatmap(bincazy_matrix,
+         annotation_col = cazy_categories,
+         show_colnames=FALSE, 
+         labels_row = Row_clusters$Genus)
+
+
+#set color palette
+cazy_category_colour = list(
+  Class = c("Actinobacteria" = "#C2DD9B", "Alphaproteobacteria" = "#B4CCDF", "Bacilli_A" = "#4A75AA", "Bacteroidia" = "#E3A29D", "Gammaproteobacteria" = "#C04335", "Gemmatimonadetes" = "#ECC485", "Myxococcia" = "#E18B46", "Nitrososphaeria" = "#4B9B7A", "Nitrospiria" = "#5F4190", "Polyangia" = "#CA6728", "Saccharimonadia" = "#9C623C", "Thermoanaerobaculia" = "#666666", "Thermoleophilia" = "#D43F88","Verrucomicrobiae" = "#FFFFB0", "Vicinamibacteria" = "#7470AF"),
+  "Category" = c("CAZy"="#CC79A7", "Methanogenesis and methanotrophy"="#003C30", "Nitrogen metabolism"="#7F0000", "Other Reductases"="black", "SCFA and alcohol conversions"="#6A51A3", "Sulfur metabolism"="#FDAE61"),
+  Treatment = c("AB" = "#0B087C", "AF" = "#691F9C", "AB+AF" = "#B05776", "PC"="#DF9D60", "NC"="#F3F973"))
+
+pheatmap(bincazy_matrix,
+         color=c("red", "blue"),
+         annotation_colors = cazy_category_colour,
+         annotation_row = Row_clusters, 
+         annotation_col = cazy_categories_annotation,
+         labels_col = cazy_categories$CAZy_Function,
+         show_colnames=TRUE,
+         drop_levels = TRUE,
+         annotation_legend= TRUE,
+         annotation_names_row = TRUE,
+         fontsize = 10, 
+         fontsize_row = 6, 
+         fontsize_col = 6,
+         cellwidth = 9,
+         angle_col = 45,
+         cellheight = 5,
+         cutree_rows = 6)
+filename ="/Volumes/micro-shared$/MoralesLab/Projects/Syaliny_Soils/MAGs/data_analysis_by_paper/Global_MAG_paper/Yugen_Figures/DRAM_cazy_heatmap_genus.pdf")
+
+dev.off()
